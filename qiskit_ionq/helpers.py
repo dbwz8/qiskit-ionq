@@ -78,6 +78,7 @@ ionq_basis_gates = [
     "h",
     "i",
     "id",
+    "if_else",
     "mcp",
     "mcphase",
     "mct",
@@ -121,6 +122,7 @@ ionq_api_aliases = {  # todo fix alias bug
     "sdg": "si",
     "sx": "v",
     "sxdg": "vi",
+    "measure": "m",
 }
 
 # https://ionq.com/docs/getting-started-with-native-gates
@@ -129,6 +131,7 @@ ionq_native_basis_gates = [
     "gpi2",
     "ms",  # Pairwise MS gate
     "zz",  # ZZ gate
+    "m",   # mid-circuit measurement gate
 ]
 
 # Each language corresponds to a different set of basis gates.
@@ -158,7 +161,6 @@ def qiskit_circ_to_ionq_circ(
 
     Raises:
         IonQGateError: If an unsupported instruction is supplied.
-        IonQMidCircuitMeasurementError: If a mid-circuit measurement is detected.
         IonQPauliExponentialError: If non-commuting PauliExponentials are found without
           the appropriate flag.
 
@@ -172,18 +174,42 @@ def qiskit_circ_to_ionq_circ(
     num_meas = 0
     meas_map = [None] * len(input_circuit.clbits)
     for instruction, qargs, cargs in input_circuit.data:
+        rotation: dict[str, Any] = {}
+
         # Don't process compiler directives.
         instruction_name = instruction.name
         if instruction_name in compiler_directives:
             continue
 
-        # Don't process measurement instructions.
+        # Handle classical conditional
+        if instruction_name == "if_else":
+            if len(instruction.params) != 2 or instruction.params[1] != None:
+                raise Exception("Only 'if-then' implemented")
+            then_circ = instruction.params[0]
+            if len(then_circ) != 1:
+                raise Excpetion("Only single 'then' gate allowed")
+            cond_bit = instruction.condition.index(cargs[0])
+            cond_sense = instruction.condition[1]
+            targets = [input_circuit.qubits.index(qargs[0])]
+            gates,n_meas, _ = qiskit_circ_to_ionq_circ(then_circ,gateset,ionq_compiler_synthesis)
+            if n_meas != 0:
+                raise Exception("No measurements allowed inside of if_else")
+            converted = {
+                "gate": "if",
+                "targets": targets,
+                "c_reg": cond_bit,
+                "cond": cond_sense,
+                "gates": gates,
+            }
+            output_circuit.append({**converted,**rotation})
+            continue
+    
+        # Handle mid-cirdcuit measurements
         if instruction_name == "measure":
             meas_map[input_circuit.clbits.index(cargs[0])] = input_circuit.qubits.index(
                 qargs[0]
             )
             num_meas += 1
-            continue
 
         # serialized identity gate is a no-op
         if instruction_name == "id":
@@ -194,7 +220,6 @@ def qiskit_circ_to_ionq_circ(
             raise ionq_exceptions.IonQGateError(instruction_name, gateset)
 
         # Process the instruction and convert.
-        rotation: dict[str, Any] = {}
         if len(instruction.params) > 0:
             if gateset == "qis" or (
                 len(instruction.params) == 1 and instruction_name != "zz"
@@ -242,6 +267,8 @@ def qiskit_circ_to_ionq_circ(
                 for i in range(instruction.num_qubits)
             ]
 
+        # measure is also considered "multi-target"
+        
         # If this is a controlled gate, make sure to set control qubits.
         if isinstance(instruction, q_cgates.ControlledGate):
             gate = instruction_name[1:]  # trim the leading c
@@ -297,18 +324,6 @@ def qiskit_circ_to_ionq_circ(
                 "coefficients": coefficients,
             }
             converted.update(gate)
-
-        # if there's a valid instruction after a measurement,
-        if num_meas > 0:
-            # see if any of the involved qubits have been measured,
-            # and raise if so — no mid-circuit measurement!
-            controls_and_targets = converted.get("targets", []) + converted.get(
-                "controls", []
-            )
-            if any(i in meas_map for i in controls_and_targets):
-                raise ionq_exceptions.IonQMidCircuitMeasurementError(
-                    input_circuit.qubits.index(qargs[0]), instruction_name
-                )
 
         output_circuit.append({**converted, **rotation})
 
