@@ -131,7 +131,7 @@ ionq_native_basis_gates = [
     "gpi2",
     "ms",  # Pairwise MS gate
     "zz",  # ZZ gate
-    "m",   # mid-circuit measurement gate
+    "m",  # mid-circuit measurement gate
 ]
 
 # Each language corresponds to a different set of basis gates.
@@ -183,15 +183,17 @@ def qiskit_circ_to_ionq_circ(
 
         # Handle classical conditional
         if instruction_name == "if_else":
-            if len(instruction.params) != 2 or instruction.params[1] != None:
+            if len(instruction.params) != 2 or instruction.params[1] is not None:
                 raise Exception("Only 'if-then' implemented")
             then_circ = instruction.params[0]
             if len(then_circ) != 1:
-                raise Excpetion("Only single 'then' gate allowed")
-            cond_bit = instruction.condition.index(cargs[0])
+                raise Exception("Only single 'then' gate allowed")
+            cond_bit = instruction.condition[0]._index
             cond_sense = instruction.condition[1]
             targets = [input_circuit.qubits.index(qargs[0])]
-            gates,n_meas, _ = qiskit_circ_to_ionq_circ(then_circ,gateset,ionq_compiler_synthesis)
+            gates, n_meas, _ = qiskit_circ_to_ionq_circ(
+                then_circ, gateset, ionq_compiler_synthesis
+            )
             if n_meas != 0:
                 raise Exception("No measurements allowed inside of if_else")
             converted = {
@@ -201,9 +203,9 @@ def qiskit_circ_to_ionq_circ(
                 "cond": cond_sense,
                 "gates": gates,
             }
-            output_circuit.append({**converted,**rotation})
+            output_circuit.append({**converted, **rotation})
             continue
-    
+
         # Handle mid-cirdcuit measurements
         if instruction_name == "measure":
             meas_map[input_circuit.clbits.index(cargs[0])] = input_circuit.qubits.index(
@@ -268,7 +270,7 @@ def qiskit_circ_to_ionq_circ(
             ]
 
         # measure is also considered "multi-target"
-        
+
         # If this is a controlled gate, make sure to set control qubits.
         if isinstance(instruction, q_cgates.ControlledGate):
             gate = instruction_name[1:]  # trim the leading c
