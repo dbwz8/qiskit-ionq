@@ -132,6 +132,7 @@ ionq_native_basis_gates = [
     "ms",  # Pairwise MS gate
     "zz",  # ZZ gate
     "m",  # mid-circuit measurement gate
+    "barrier",  # barrier across qubits
 ]
 
 # Each language corresponds to a different set of basis gates.
@@ -169,7 +170,6 @@ def qiskit_circ_to_ionq_circ(
         int: The number of measurements.
         dict: The measurement map from qubit number to classical bit number.
     """
-    compiler_directives = ["barrier"]
     output_circuit = []
     num_meas = 0
     meas_map = [None] * len(input_circuit.clbits)
@@ -178,8 +178,6 @@ def qiskit_circ_to_ionq_circ(
 
         # Don't process compiler directives.
         instruction_name = instruction.name
-        if instruction_name in compiler_directives:
-            continue
 
         # Handle classical conditional
         if instruction_name == "if_else":
@@ -190,7 +188,7 @@ def qiskit_circ_to_ionq_circ(
                 raise Exception("Only single 'then' gate allowed")
             cond_bit = instruction.condition[0]._index
             cond_sense = instruction.condition[1]
-            targets = [input_circuit.qubits.index(qargs[0])]
+            targets = [input_circuit.qubits.index(i) for i in qargs]
             gates, n_meas, _ = qiskit_circ_to_ionq_circ(
                 then_circ, gateset, ionq_compiler_synthesis
             )
@@ -212,6 +210,15 @@ def qiskit_circ_to_ionq_circ(
                 qargs[0]
             )
             num_meas += 1
+
+        # Maintain barriers
+        if instruction_name == "barrier":
+            converted = {
+                "gate": "barrier",
+                "targets": [input_circuit.qubits.index(i) for i in qargs],
+            }
+            output_circuit.append(converted)
+            continue
 
         # serialized identity gate is a no-op
         if instruction_name == "id":
