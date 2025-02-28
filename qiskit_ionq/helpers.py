@@ -173,11 +173,23 @@ def qiskit_circ_to_ionq_circ(
     output_circuit = []
     num_meas = 0
     meas_map = [None] * len(input_circuit.clbits)
+    prev_m_target = None
     for instruction, qargs, cargs in input_circuit.data:
         rotation: dict[str, Any] = {}
 
         # Don't process compiler directives.
         instruction_name = instruction.name
+
+        # Make sure measurements are followed by resets
+        if prev_m_target is not None:
+            if instruction_name != "reset":
+                raise Exception("Measurement must be followed by reset")
+            if qargs[0] != prev_m_target:
+                raise Exception("Reset must be on same qubit as Measurement")
+            prev_m_target = None
+            continue
+        elif instruction_name == "reset":
+            raise Exception("Reset not supported except after measurement")
 
         # Handle classical conditional
         if instruction_name == "if_else":
@@ -204,12 +216,13 @@ def qiskit_circ_to_ionq_circ(
             output_circuit.append({**converted, **rotation})
             continue
 
-        # Handle mid-cirdcuit measurements
+        # Handle mid-circuit measurements
         if instruction_name == "measure":
             meas_map[input_circuit.clbits.index(cargs[0])] = input_circuit.qubits.index(
                 qargs[0]
             )
             num_meas += 1
+            prev_m_target = qargs[0]
 
         # Maintain barriers
         if instruction_name == "barrier":
