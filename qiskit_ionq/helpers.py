@@ -174,6 +174,7 @@ def qiskit_circ_to_ionq_circ(
     num_meas = 0
     meas_map = [None] * len(input_circuit.clbits)
     prev_m_target = None
+    last_go_target = 0
     for instruction, qargs, cargs in input_circuit.data:
         rotation: dict[str, Any] = {}
 
@@ -196,8 +197,6 @@ def qiskit_circ_to_ionq_circ(
             if len(instruction.params) != 2 or instruction.params[1] is not None:
                 raise Exception("Only 'if-then' implemented")
             then_circ = instruction.params[0]
-            if len(then_circ) != 1:
-                raise Exception("Only single 'then' gate allowed")
             cond_bit = instruction.condition[0]._index
             cond_sense = instruction.condition[1]
             targets = [input_circuit.qubits.index(i) for i in qargs]
@@ -206,14 +205,22 @@ def qiskit_circ_to_ionq_circ(
             )
             if n_meas != 0:
                 raise Exception("No measurements allowed inside of if_else")
+            last_go_target += 1
+            # Invert condition to jump around the block if not true
+            conds = f'{"F" if cond_sense else "T"}{cond_bit}'
             converted = {
-                "gate": "if",
-                "targets": targets,
-                "c_reg": cond_bit,
-                "cond": cond_sense,
-                "gates": gates,
+                "gate": "go",
+                "go_tgt": last_go_target,
+                "conds": conds,
             }
-            output_circuit.append({**converted, **rotation})
+            output_circuit.append(converted)
+            for gate in gates:
+                output_circuit.append(gate)
+            converted = {
+                "gate": "tgt",
+                "go_tgt": last_go_target,
+            }
+            output_circuit.append(converted)
             continue
 
         # Handle mid-circuit measurements
@@ -223,15 +230,6 @@ def qiskit_circ_to_ionq_circ(
             )
             num_meas += 1
             prev_m_target = qargs[0]
-
-        # Maintain barriers
-        if instruction_name == "barrier":
-            converted = {
-                "gate": "barrier",
-                "targets": [input_circuit.qubits.index(i) for i in qargs],
-            }
-            output_circuit.append(converted)
-            continue
 
         # serialized identity gate is a no-op
         if instruction_name == "id":
