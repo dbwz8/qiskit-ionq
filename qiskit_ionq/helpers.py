@@ -214,7 +214,10 @@ def qiskit_circ_to_ionq_circ(
                 "conds": conds,
             }
             output_circuit.append(converted)
+            # Need to re-map the then qubit indicies
             for gate in gates:
+                targets = [qargs[q]._index for q in gate["targets"]]
+                gate["targets"] = targets
                 output_circuit.append(gate)
             converted = {
                 "gate": "tgt",
