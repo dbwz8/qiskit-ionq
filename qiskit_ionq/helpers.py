@@ -192,38 +192,52 @@ def qiskit_circ_to_ionq_circ(
         elif instruction_name == "reset":
             raise Exception("Reset not supported except after measurement")
 
-        # Handle classical conditional
-        if instruction_name == "if_else":
-            if len(instruction.params) != 2 or instruction.params[1] is not None:
-                raise Exception("Only 'if-then' implemented")
-            then_circ = instruction.params[0]
-            cond_bit = instruction.condition[0]._index
-            cond_sense = instruction.condition[1]
-            targets = [input_circuit.qubits.index(i) for i in qargs]
-            gates, n_meas, _ = qiskit_circ_to_ionq_circ(
-                then_circ, gateset, ionq_compiler_synthesis
-            )
-            if n_meas != 0:
-                raise Exception("No measurements allowed inside of if_else")
-            last_go_target += 1
-            # Invert condition to jump around the block if not true
-            conds = f'{"F" if cond_sense else "T"}{cond_bit}'
-            converted = {
-                "gate": "go",
-                "go_tgt": last_go_target,
-                "conds": conds,
-            }
+        def emit(gate, tgt, conds=None):
+            nonlocal output_circuit
+            converted = {"gate": gate, "go_tgt": tgt}
+            if conds is not None:
+                converted["conds"] = conds
             output_circuit.append(converted)
-            # Need to re-map the then qubit indicies
+
+        def remap_body(circ):
+            nonlocal output_circuit
+            gates, _, _ = qiskit_circ_to_ionq_circ(
+                circ, gateset, ionq_compiler_synthesis
+            )
             for gate in gates:
                 targets = [qargs[q]._index for q in gate["targets"]]
                 gate["targets"] = targets
                 output_circuit.append(gate)
-            converted = {
-                "gate": "tgt",
-                "go_tgt": last_go_target,
-            }
-            output_circuit.append(converted)
+
+        # Handle classical conditional
+        if instruction_name == "if_else":
+            then_circ = instruction.params[0]
+            else_circ = instruction.params[1]
+            cond_bits = instruction.condition[0]
+            cond_sense = instruction.condition[1]
+            if isinstance(cond_bits, ClassicalRegister):
+                conds = ""
+                for bit in range(cond_bits.size):
+                    bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
+                    conds += f"{bit_sense}{bit}"
+            else:
+                cond_bit = instruction.condition[0]._index
+                bit_sense = "T" if cond_sense == 1 else "F"
+                conds = f"{bit_sense}{cond_bit}"
+            targets = [input_circuit.qubits.index(i) for i in qargs]
+            last_go_target += 1
+            target1 = last_go_target
+            last_go_target += 1
+            target2 = last_go_target
+
+            # Put out the code blocks
+            emit("go", target1, conds)
+            if else_circ is not None:
+                remap_body(else_circ)
+            emit("go", target2)
+            emit("tgt", target1)
+            remap_body(then_circ)
+            emit("tgt", target2)
             continue
 
         # Handle mid-circuit measurements
