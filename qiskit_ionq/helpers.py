@@ -240,6 +240,30 @@ def qiskit_circ_to_ionq_circ(
             emit("tgt", target2)
             continue
 
+        # Handle classical while loop
+        if instruction_name == "while_loop":
+            while_circ = instruction.params[0]
+            cond_bits = instruction.condition[0]
+            cond_sense = instruction.condition[1]
+            if isinstance(cond_bits, ClassicalRegister):
+                conds = ""
+                for bit in range(cond_bits.size):
+                    bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
+                    conds += f"{bit_sense}{bit}"
+            else:
+                cond_bit = instruction.condition[0]._index
+                bit_sense = "T" if cond_sense == 1 else "F"
+                conds = f"{bit_sense}{cond_bit}"
+            targets = [input_circuit.qubits.index(i) for i in qargs]
+            last_go_target += 1
+            target1 = last_go_target
+
+            # Put out the code block
+            emit("tgt", target1)
+            remap_body(while_circ)
+            emit("go", target1, conds)
+            continue
+
         # Handle mid-circuit measurements
         if instruction_name == "measure":
             meas_map[input_circuit.clbits.index(cargs[0])] = input_circuit.qubits.index(
