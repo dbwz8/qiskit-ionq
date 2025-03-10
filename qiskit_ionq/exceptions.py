@@ -241,6 +241,9 @@ class IonQJobTimeoutError(IonQError, JobTimeoutError):
 class IonQPauliExponentialError(IonQError):
     """Errors generated from improper usage of Pauli exponentials."""
 
+class IonQDefaultError(IonQError):
+    """Errors generated from specifying DEFAULT case in switch statement."""
+
 
 __all__ = [
     "IonQError",

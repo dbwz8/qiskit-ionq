@@ -50,6 +50,7 @@ from qiskit.circuit import (
     QuantumCircuit,
     QuantumRegister,
     ClassicalRegister,
+    CASE_DEFAULT
 )
 
 # Use this to get version instead of __version__ to avoid circular dependency.
@@ -164,6 +165,7 @@ def qiskit_circ_to_ionq_circ(
         IonQGateError: If an unsupported instruction is supplied.
         IonQPauliExponentialError: If non-commuting PauliExponentials are found without
           the appropriate flag.
+        IonQDefaultError: If a DEFAULT is provided in a SWITCH statement
 
     Returns:
         list[dict]: A list of instructions in a converted dict format.
@@ -240,6 +242,34 @@ def qiskit_circ_to_ionq_circ(
             emit("tgt", target2)
             continue
 
+        # Handle classical switch statement
+        if instruction_name == "switch_case":
+            cond_bits = instruction.target
+            targets = [input_circuit.qubits.index(i) for i in qargs]
+            for cond_sense,case_circ in instruction.cases().items():
+                if cond_sense == CASE_DEFAULT:
+                    raise ionq_exceptions.IonQDefaultError("DEFAULT not allowed in SWITCH statements")
+                elif isinstance(cond_bits, ClassicalRegister):
+                    conds = ""
+                    for bit in range(cond_bits.size):
+                        bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
+                        conds += f"{bit_sense}{bit}"
+                else:
+                    cond_bit = instruction.condition[0]._index
+                    bit_sense = "T" if cond_sense == 1 else "F"
+                    conds = f"{bit_sense}{cond_bit}"
+
+                last_go_target += 1
+                target_match = last_go_target
+                last_go_target += 1
+                target_skip = last_go_target
+                emit("go", target_match, conds)
+                emit("go", target_skip)
+                emit("tgt",target_match)
+                remap_body(case_circ)
+                emit("tgt",target_skip)
+            continue
+
         # Handle classical while loop
         if instruction_name == "while_loop":
             while_circ = instruction.params[0]
@@ -254,7 +284,6 @@ def qiskit_circ_to_ionq_circ(
                 cond_bit = instruction.condition[0]._index
                 bit_sense = "T" if cond_sense == 1 else "F"
                 conds = f"{bit_sense}{cond_bit}"
-            targets = [input_circuit.qubits.index(i) for i in qargs]
             last_go_target += 1
             target1 = last_go_target
 
