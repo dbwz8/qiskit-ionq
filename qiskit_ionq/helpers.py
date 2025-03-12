@@ -50,7 +50,8 @@ from qiskit.circuit import (
     QuantumCircuit,
     QuantumRegister,
     ClassicalRegister,
-    CASE_DEFAULT
+    CASE_DEFAULT,
+    Qubit
 )
 from qiskit.circuit.classical.expr import Binary, Value, Var
 
@@ -185,6 +186,7 @@ def qiskit_circ_to_ionq_circ(
     input_circuit: QuantumCircuit,
     gateset: Literal["qis", "native"] = "qis",
     ionq_compiler_synthesis: bool = False,
+    qubits: list[Qubit] = None,
 ):
     """Build a circuit in IonQ's instruction format from qiskit instructions.
 
@@ -198,6 +200,7 @@ def qiskit_circ_to_ionq_circ(
           allowed, in the future we may provide transpilation to these gates in Qiskit).
         ionq_compiler_synthesis (bool): Whether to opt-in to IonQ compiler's intelligent
           trotterization.
+        qubits (list[Qubit]): Overide circuit qubits or measurement targets in sub-circuits
 
     Raises:
         IonQGateError: If an unsupported instruction is supplied.
@@ -215,6 +218,7 @@ def qiskit_circ_to_ionq_circ(
     meas_map = {}
     prev_m_target = None
     last_go_target = 0
+    qubits = input_circuit.qubits if qubits is None else qubits
 
     def emit(gate, tgt, conds=None):
         nonlocal output_circuit
@@ -223,13 +227,12 @@ def qiskit_circ_to_ionq_circ(
             converted["conds"] = conds
         output_circuit.append(converted)
 
+    # Need to map qubits from outer block
     def remap_body(circ):
         nonlocal input_circuit,output_circuit,meas_map
-        gates, _, m_map = qiskit_circ_to_ionq_circ(
-            circ, gateset, ionq_compiler_synthesis
+        gates, _, _ = qiskit_circ_to_ionq_circ(
+            circ, gateset, ionq_compiler_synthesis,qubits=qubits
         )
-        for m in m_map:
-            meas_map[m] = m_map[m]
         for gate in gates:
             if 'targets' in gate:
                 for idx,tgt in enumerate(gate['targets']):
@@ -282,6 +285,8 @@ def qiskit_circ_to_ionq_circ(
             cond_bits = instruction.target
             targets = [input_circuit.qubits.index(i) for i in qargs]
             for cond_sense,case_circ in instruction.cases().items():
+                if len(case_circ.data) == 0:
+                    continue
                 conds = _parse_bits_sense(cond_bits,cond_sense)
                 last_go_target += 1
                 target_match = last_go_target
