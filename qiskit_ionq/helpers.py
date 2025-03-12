@@ -87,6 +87,7 @@ ionq_basis_gates = [
     "mcx",
     "mcx_gray",
     "measure",
+    "reset",
     "p",
     "rx",
     "rxx",
@@ -125,6 +126,7 @@ ionq_api_aliases = {  # todo fix alias bug
     "sx": "v",
     "sxdg": "vi",
     "measure": "m",
+    "reset": "r",
 }
 
 # https://ionq.com/docs/getting-started-with-native-gates
@@ -134,7 +136,9 @@ ionq_native_basis_gates = [
     "ms",  # Pairwise MS gate
     "zz",  # ZZ gate
     "m",  # mid-circuit measurement gate
+    "r", # reset qubit
     "barrier",  # barrier across qubits
+    "reset", # reset a qubit to |0>
 ]
 
 # Each language corresponds to a different set of basis gates.
@@ -211,6 +215,32 @@ def qiskit_circ_to_ionq_circ(
     meas_map = {}
     prev_m_target = None
     last_go_target = 0
+
+    def emit(gate, tgt, conds=None):
+        nonlocal output_circuit
+        converted = {"gate": gate, "go_tgt": tgt}
+        if conds is not None:
+            converted["conds"] = conds
+        output_circuit.append(converted)
+
+    def remap_body(circ):
+        nonlocal input_circuit,output_circuit,meas_map
+        gates, _, m_map = qiskit_circ_to_ionq_circ(
+            circ, gateset, ionq_compiler_synthesis
+        )
+        for m in m_map:
+            meas_map[m] = m_map[m]
+        for gate in gates:
+            if 'targets' in gate:
+                for idx,tgt in enumerate(gate['targets']):
+                    mapped = input_circuit.qubits.index(circ.qubits[tgt])
+                    gate['targets'][idx] = mapped
+            if 'controls' in gate:
+                for idx,ctrl in enumerate(gate['controls']):
+                    mapped = input_circuit.qubits.index(circ.qubits[ctrl])
+                    gate['controls'][idx] = mapped
+            output_circuit.append(gate)
+
     for instruction, qargs, cargs in input_circuit.data:
         rotation: dict[str, Any] = {}
 
@@ -225,26 +255,6 @@ def qiskit_circ_to_ionq_circ(
             if reset_target != prev_m_target:
                 raise Exception("Reset must be on same qubit as Measurement")
             prev_m_target = None
-            continue
-        elif instruction_name == "reset":
-            raise Exception("Reset not supported except after measurement")
-
-        def emit(gate, tgt, conds=None):
-            nonlocal output_circuit
-            converted = {"gate": gate, "go_tgt": tgt}
-            if conds is not None:
-                converted["conds"] = conds
-            output_circuit.append(converted)
-
-        def remap_body(circ):
-            nonlocal output_circuit,meas_map
-            gates, _, m_map = qiskit_circ_to_ionq_circ(
-                circ, gateset, ionq_compiler_synthesis
-            )
-            for m in m_map:
-                meas_map[m] = m_map[m]
-            for gate in gates:
-                output_circuit.append(gate)
 
         # Handle classical conditional
         if instruction_name == "if_else":
