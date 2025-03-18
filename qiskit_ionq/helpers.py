@@ -51,7 +51,8 @@ from qiskit.circuit import (
     QuantumRegister,
     ClassicalRegister,
     CASE_DEFAULT,
-    Qubit
+    Qubit,
+    Clbit,
 )
 from qiskit.circuit.classical.expr import Binary, Value, Var
 
@@ -137,9 +138,9 @@ ionq_native_basis_gates = [
     "ms",  # Pairwise MS gate
     "zz",  # ZZ gate
     "m",  # mid-circuit measurement gate
-    "r", # reset qubit
+    "r",  # reset qubit
     "barrier",  # barrier across qubits
-    "reset", # reset a qubit to |0>
+    "reset",  # reset a qubit to |0>
 ]
 
 # Each language corresponds to a different set of basis gates.
@@ -149,39 +150,52 @@ GATESET_MAP = {
 }
 
 
-def _parse_bits_sense(cond_bits,cond_sense):
+def _parse_bits_sense(cond_bits, cond_sense, cregs: list[ClassicalRegister]):
     if cond_sense == CASE_DEFAULT:
-        raise ionq_exceptions.IonQDefaultError("DEFAULT not allowed in SWITCH statements")
+        raise ionq_exceptions.IonQDefaultError(
+            "DEFAULT not allowed in SWITCH statements"
+        )
     elif isinstance(cond_bits, ClassicalRegister):
+        bit_base = 0
+        for creg in cregs:
+            if cond_bits == creg:
+                break
+            bit_base += creg.size
         conds = ""
         for bit in range(cond_bits.size):
             bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
-            conds += f"{bit_sense}{bit}"
-    else:
+            conds += f"{bit_sense}{bit+bit_base}"
+    else:  ###DBG probably needs work for multiple classical registers as well
         cond_bit = cond_bits._index
         bit_sense = "T" if cond_sense == 1 else "F"
         conds = f"{bit_sense}{cond_bit}"
     return conds
-    
-def _parse_condition(condition):
-    if isinstance(condition,Binary):
+
+
+def _parse_condition(condition, cregs: list[ClassicalRegister]):
+    if isinstance(condition, Binary):
         op = condition.op
         if op != Binary.Op.EQUAL:
             raise Exception("Only supporting Op.Equal for conditions at this time")
         left = condition.left
-        if not isinstance(left,Var):
-            raise Exception("Only supporting ClassicalRegister on left for conditions at this time")
+        if not isinstance(left, Var):
+            raise Exception(
+                "Only supporting ClassicalRegister on left for conditions at this time"
+            )
         left = left.var
         right = condition.right
-        if not isinstance(right,Value):
-            raise Exception("Only supporting int value on right for conditions at this time")
+        if not isinstance(right, Value):
+            raise Exception(
+                "Only supporting int value on right for conditions at this time"
+            )
         right = right.value
-        return _parse_bits_sense(left,right)
+        return _parse_bits_sense(left, right, cregs)
     else:
         cond_bits = condition[0]
         cond_sense = condition[1]
-        return _parse_bits_sense(cond_bits,cond_sense)
-    
+        return _parse_bits_sense(cond_bits, cond_sense, cregs)
+
+
 def qiskit_circ_to_ionq_circ(
     input_circuit: QuantumCircuit,
     gateset: Literal["qis", "native"] = "qis",
@@ -229,20 +243,30 @@ def qiskit_circ_to_ionq_circ(
 
     # Need to map qubits from outer block
     def remap_body(circ):
-        nonlocal input_circuit,output_circuit,meas_map
+        nonlocal input_circuit, output_circuit, meas_map
+        circ.cregs = input_circuit.cregs
         gates, _, _ = qiskit_circ_to_ionq_circ(
-            circ, gateset, ionq_compiler_synthesis,qubits=qubits
+            circ, gateset, ionq_compiler_synthesis, qubits=qubits
         )
         for gate in gates:
-            if 'targets' in gate:
-                for idx,tgt in enumerate(gate['targets']):
+            if "targets" in gate:
+                for idx, tgt in enumerate(gate["targets"]):
                     mapped = input_circuit.qubits.index(circ.qubits[tgt])
-                    gate['targets'][idx] = mapped
-            if 'controls' in gate:
-                for idx,ctrl in enumerate(gate['controls']):
+                    gate["targets"][idx] = mapped
+            if "controls" in gate:
+                for idx, ctrl in enumerate(gate["controls"]):
                     mapped = input_circuit.qubits.index(circ.qubits[ctrl])
-                    gate['controls'][idx] = mapped
+                    gate["controls"][idx] = mapped
             output_circuit.append(gate)
+
+    def classical_index(bit: Clbit) -> int:
+        nonlocal input_circuit
+        idx = 0
+        for reg in input_circuit.cregs:
+            if bit._register == reg:
+                return idx + bit._index
+            idx += reg.size
+        raise Exception(f"Could not find classical bit: {bit}")
 
     for instruction, qargs, cargs in input_circuit.data:
         rotation: dict[str, Any] = {}
@@ -263,7 +287,7 @@ def qiskit_circ_to_ionq_circ(
         if instruction_name == "if_else":
             then_circ = instruction.params[0]
             else_circ = instruction.params[1]
-            conds = _parse_condition(instruction.condition)
+            conds = _parse_condition(instruction.condition, input_circuit.cregs)
             targets = [input_circuit.qubits.index(i) for i in qargs]
             last_go_target += 1
             target1 = last_go_target
@@ -284,25 +308,25 @@ def qiskit_circ_to_ionq_circ(
         if instruction_name == "switch_case":
             cond_bits = instruction.target
             targets = [input_circuit.qubits.index(i) for i in qargs]
-            for cond_sense,case_circ in instruction.cases().items():
+            for cond_sense, case_circ in instruction.cases().items():
                 if len(case_circ.data) == 0:
                     continue
-                conds = _parse_bits_sense(cond_bits,cond_sense)
+                conds = _parse_bits_sense(cond_bits, cond_sense, input_circuit.cregs)
                 last_go_target += 1
                 target_match = last_go_target
                 last_go_target += 1
                 target_skip = last_go_target
                 emit("go", target_match, conds)
                 emit("go", target_skip)
-                emit("tgt",target_match)
+                emit("tgt", target_match)
                 remap_body(case_circ)
-                emit("tgt",target_skip)
+                emit("tgt", target_skip)
             continue
 
         # Handle classical while loop
         if instruction_name == "while_loop":
             while_circ = instruction.params[0]
-            conds = _parse_condition(instruction.condition)
+            conds = _parse_condition(instruction.condition, input_circuit.cregs)
             last_go_target += 1
             target1 = last_go_target
 
@@ -315,7 +339,7 @@ def qiskit_circ_to_ionq_circ(
         # Handle mid-circuit measurements
         if instruction_name == "measure":
             prev_m_target = input_circuit.qubits.index(qargs[0])
-            meas_map[input_circuit.clbits.index(cargs[0])] = prev_m_target
+            meas_map[classical_index(cargs[0])] = prev_m_target
             num_meas += 1
 
         # serialized identity gate is a no-op
