@@ -165,7 +165,7 @@ def _parse_bits_sense(cond_bits, cond_sense, cregs: list[ClassicalRegister]):
         for bit in range(cond_bits.size):
             bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
             conds += f"{bit_sense}{bit+bit_base}"
-    else:  ###DBG probably needs work for multiple classical registers as well
+    else:
         cond_bit = cond_bits._index
         bit_sense = "T" if cond_sense == 1 else "F"
         conds = f"{bit_sense}{cond_bit}"
