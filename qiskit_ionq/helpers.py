@@ -153,19 +153,41 @@ GATESET_MAP = {
 
 @dataclass
 class CondParser:
+    """ Parse complex test conditions
+
+    Returns:
+        qore string of conditions
+    """
     cregs: list[ClassicalRegister]
     
-    def parse_bits_sense(self,cond_bits, cond_sense):
+    def parse_bits_sense(self,cond_bits, cond_sense) -> str:
+        """ Parse single condition on an equality test
+
+        Args:
+            cond_bits: who to compare against (LHS)
+            cond_sense: what to compare to (RHS)
+
+        Returns:
+            str: compiled string
+        """
         if cond_sense == CASE_DEFAULT:
             raise ionq_exceptions.IonQDefaultError(
                 "DEFAULT not allowed in SWITCH statements"
             )
+        if isinstance(cond_bits, Clbit):
+            bit : Clbit = cond_bits
+            reg = bit._register
+        elif isinstance(cond_bits, ClassicalRegister):
+            reg = cond_bits
+        else:
+            raise Exception("Expected a Clbit or ClassicalRegister on LHS")
+        bit_base = 0
+        for creg in self.cregs:
+            if reg == creg:
+                break
+            bit_base += creg.size
+
         if isinstance(cond_bits, ClassicalRegister):
-            bit_base = 0
-            for creg in self.cregs:
-                if cond_bits == creg:
-                    break
-                bit_base += creg.size
             conds = ""
             for bit in range(cond_bits.size):
                 bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
@@ -175,10 +197,18 @@ class CondParser:
                 cond_sense = False if cond_sense == 0 else True
             cond_bit = cond_bits._index
             bit_sense = "T" if cond_sense else "F"
-            conds = f"{bit_sense}{cond_bit}"
+            conds = f"{bit_sense}{cond_bit+bit_base}"
         return conds
 
-    def parse_OR(self,condition):
+    def parse_OR(self,condition) -> str:
+        """Parse an OR condition (allowed to contain EQUAL, AND or OR)
+
+        Args:
+            condition: a legal OR condition
+
+        Returns:
+            str: compiled string
+        """
         def getParts(cond):
             match cond.op:
                 case Binary.Op.EQUAL:
@@ -192,11 +222,19 @@ class CondParser:
         left = getParts(condition.left)
         right = getParts(condition.right)
         if condition.op == Binary.Op.LOGIC_OR:
-            return left + "|" + right
+            return left + "," + right
         else:
             return left+right
     
-    def parse_AND(self,condition):
+    def parse_AND(self,condition) -> str:
+        """Parse an AND condition (allowed to contain EQUAL or AND)
+
+        Args:
+            condition: a legal AND condition
+
+        Returns:
+            str: compiled string
+        """
         def getParts(cond):
             match cond.op:
                 case Binary.Op.EQUAL:
@@ -209,7 +247,15 @@ class CondParser:
         right = getParts(condition.right)
         return left+right
 
-    def parse_EQUAL(self,condition):
+    def parse_EQUAL(self,condition) -> str:
+        """Parse EQUAL condition
+
+        Args:
+            condition: A legal EQUAL condition
+
+        Returns:
+            str: compiled string
+        """
         left = condition.left
         if not isinstance(left, Var):
             raise Exception(
@@ -342,7 +388,6 @@ def qiskit_circ_to_ionq_circ(
             else_circ = instruction.params[1]
             parser = CondParser(input_circuit.cregs)
             conds = parser.parse(instruction.condition)
-            targets = [input_circuit.qubits.index(i) for i in qargs]
             last_go_target += 1
             target1 = last_go_target
             last_go_target += 1
@@ -361,7 +406,6 @@ def qiskit_circ_to_ionq_circ(
         # Handle classical switch statement
         if instruction_name == "switch_case":
             cond_bits = instruction.target
-            targets = [input_circuit.qubits.index(i) for i in qargs]
             for cond_sense, case_circ in instruction.cases().items():
                 if len(case_circ.data) == 0:
                     continue
