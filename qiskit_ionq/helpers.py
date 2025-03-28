@@ -31,6 +31,7 @@ to IonQ REST API compatible values.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import gzip
 import base64
@@ -150,33 +151,65 @@ GATESET_MAP = {
 }
 
 
-def _parse_bits_sense(cond_bits, cond_sense, cregs: list[ClassicalRegister]):
-    if cond_sense == CASE_DEFAULT:
-        raise ionq_exceptions.IonQDefaultError(
-            "DEFAULT not allowed in SWITCH statements"
-        )
-    elif isinstance(cond_bits, ClassicalRegister):
-        bit_base = 0
-        for creg in cregs:
-            if cond_bits == creg:
-                break
-            bit_base += creg.size
-        conds = ""
-        for bit in range(cond_bits.size):
-            bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
-            conds += f"{bit_sense}{bit+bit_base}"
-    else:
-        cond_bit = cond_bits._index
-        bit_sense = "T" if cond_sense == 1 else "F"
-        conds = f"{bit_sense}{cond_bit}"
-    return conds
+@dataclass
+class CondParser:
+    cregs: list[ClassicalRegister]
+    
+    def parse_bits_sense(self,cond_bits, cond_sense):
+        if cond_sense == CASE_DEFAULT:
+            raise ionq_exceptions.IonQDefaultError(
+                "DEFAULT not allowed in SWITCH statements"
+            )
+        if isinstance(cond_bits, ClassicalRegister):
+            bit_base = 0
+            for creg in self.cregs:
+                if cond_bits == creg:
+                    break
+                bit_base += creg.size
+            conds = ""
+            for bit in range(cond_bits.size):
+                bit_sense = "T" if cond_sense & (1 << bit) == (1 << bit) else "F"
+                conds += f"{bit_sense}{bit+bit_base}"
+        else:
+            if isinstance(cond_sense,int):
+                cond_sense = False if cond_sense == 0 else True
+            cond_bit = cond_bits._index
+            bit_sense = "T" if cond_sense else "F"
+            conds = f"{bit_sense}{cond_bit}"
+        return conds
 
+    def parse_OR(self,condition):
+        def getParts(cond):
+            match cond.op:
+                case Binary.Op.EQUAL:
+                    return self.parse_EQUAL(cond)
+                case Binary.Op.LOGIC_AND:
+                    return self.parse_AND(cond)
+                case Binary.Op.LOGIC_OR:
+                    return self.parse_OR(cond)
+                case _:
+                    raise(Exception("OR can only contain OR, AND or EQUAL"))
+        left = getParts(condition.left)
+        right = getParts(condition.right)
+        if condition.op == Binary.Op.LOGIC_OR:
+            return left + "|" + right
+        else:
+            return left+right
+    
+    def parse_AND(self,condition):
+        def getParts(cond):
+            match cond.op:
+                case Binary.Op.EQUAL:
+                    return self.parse_EQUAL(cond)
+                case Binary.Op.LOGIC_AND:
+                    return self.parse_AND(cond)
+                case _:
+                    raise(Exception("AND can only contain AND or EQUAL"))
+        left = getParts(condition.left)
+        right = getParts(condition.right)
+        return left+right
 
-def _parse_condition(condition, cregs: list[ClassicalRegister]):
-    if isinstance(condition, Binary):
-        op = condition.op
-        if op != Binary.Op.EQUAL:
-            raise Exception("Only supporting Op.Equal for conditions at this time")
+    def parse_EQUAL(self,condition):
         left = condition.left
         if not isinstance(left, Var):
             raise Exception(
@@ -189,11 +222,31 @@ def _parse_condition(condition, cregs: list[ClassicalRegister]):
                 "Only supporting int value on right for conditions at this time"
             )
         right = right.value
-        return _parse_bits_sense(left, right, cregs)
-    else:
-        cond_bits = condition[0]
-        cond_sense = condition[1]
-        return _parse_bits_sense(cond_bits, cond_sense, cregs)
+        return self.parse_bits_sense(left, right)
+        
+    def parse(self,condition) -> str:
+        """Top level of condition parser
+
+        Args:
+            condition: Top level condition specification
+
+        Returns:
+            conds string for qore output
+        """
+        if isinstance(condition, Binary):
+            match condition.op:
+                case Binary.Op.EQUAL:
+                    return self.parse_EQUAL(condition)
+                case Binary.Op.LOGIC_AND:
+                    return self.parse_AND(condition)
+                case Binary.Op.LOGIC_OR:
+                    return self.parse_OR(condition)
+                case _:
+                    raise Exception(f"Unexpected operation: {condition.op}")
+        else:
+            cond_bits = condition[0]
+            cond_sense = condition[1]
+            return self.parse_bits_sense(cond_bits, cond_sense)
 
 
 def qiskit_circ_to_ionq_circ(
@@ -287,7 +340,8 @@ def qiskit_circ_to_ionq_circ(
         if instruction_name == "if_else":
             then_circ = instruction.params[0]
             else_circ = instruction.params[1]
-            conds = _parse_condition(instruction.condition, input_circuit.cregs)
+            parser = CondParser(input_circuit.cregs)
+            conds = parser.parse(instruction.condition)
             targets = [input_circuit.qubits.index(i) for i in qargs]
             last_go_target += 1
             target1 = last_go_target
@@ -311,7 +365,8 @@ def qiskit_circ_to_ionq_circ(
             for cond_sense, case_circ in instruction.cases().items():
                 if len(case_circ.data) == 0:
                     continue
-                conds = _parse_bits_sense(cond_bits, cond_sense, input_circuit.cregs)
+                parser = CondParser(input_circuit.cregs)
+                conds = parser.parse_bits_sense(cond_bits,cond_sense)
                 last_go_target += 1
                 target_match = last_go_target
                 last_go_target += 1
@@ -326,7 +381,8 @@ def qiskit_circ_to_ionq_circ(
         # Handle classical while loop
         if instruction_name == "while_loop":
             while_circ = instruction.params[0]
-            conds = _parse_condition(instruction.condition, input_circuit.cregs)
+            parser = CondParser(input_circuit.cregs)
+            conds = parser.parse(instruction.condition)
             last_go_target += 1
             target1 = last_go_target
 
