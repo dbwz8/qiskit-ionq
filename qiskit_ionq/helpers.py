@@ -330,12 +330,12 @@ def qiskit_circ_to_ionq_circ(
     num_meas = 0
     meas_map = {}
     prev_m_target = None
-    last_go_target = 0
+    last_target = 0
     qubits = input_circuit.qubits if qubits is None else qubits
 
-    def emit(gate, tgt, conds=None):
+    def emit(gate, tgt, conditions=None):
         nonlocal output_circuit
-        converted = {"gate": gate, "go_tgt": tgt}
+        converted = {"gate": gate, "target": tgt}
         if conds is not None:
             converted["conds"] = conds
         output_circuit.append(converted)
@@ -388,10 +388,10 @@ def qiskit_circ_to_ionq_circ(
             else_circ = instruction.params[1]
             parser = CondParser(input_circuit.cregs)
             conds = parser.parse(instruction.condition)
-            last_go_target += 1
-            target1 = last_go_target
-            last_go_target += 1
-            target2 = last_go_target
+            last_target += 1
+            target1 = last_target
+            last_target += 1
+            target2 = last_target
 
             # Put out the code blocks
             emit("go", target1, conds)
@@ -411,10 +411,10 @@ def qiskit_circ_to_ionq_circ(
                     continue
                 parser = CondParser(input_circuit.cregs)
                 conds = parser.parse_bits_sense(cond_bits,cond_sense)
-                last_go_target += 1
-                target_match = last_go_target
-                last_go_target += 1
-                target_skip = last_go_target
+                last_target += 1
+                target_match = last_target
+                last_target += 1
+                target_skip = last_target
                 emit("go", target_match, conds)
                 emit("go", target_skip)
                 emit("tgt", target_match)
@@ -427,8 +427,8 @@ def qiskit_circ_to_ionq_circ(
             while_circ = instruction.params[0]
             parser = CondParser(input_circuit.cregs)
             conds = parser.parse(instruction.condition)
-            last_go_target += 1
-            target1 = last_go_target
+            last_target += 1
+            target1 = last_target
 
             # Put out the code block
             emit("tgt", target1)
