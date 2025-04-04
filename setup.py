@@ -48,7 +48,7 @@ with open(test_requirements_path) as _fp:
 
 # This is needed to prevent importing any package specific dependencies at
 #   stages of the setup.py life-cycle where they may not yet be installed.
-__version__ = None
+__version__:str | None = None
 with open(version_path) as _fp:
     exec(_fp.read())  # pylint: disable=exec-used
 

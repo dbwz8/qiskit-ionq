@@ -57,7 +57,7 @@ class TestUnittestCompatibility(unittest.TestCase):
         requests_mock (:class:`requests_mock.Mocker`): A requests mocker.
     """
 
-    requests_mock = None
+    requests_mock:dict|None = None
 
     @pytest.fixture(autouse=True)
     def init_requests_mock(self, requests_mock):

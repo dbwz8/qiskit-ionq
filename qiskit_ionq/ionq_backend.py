@@ -137,7 +137,7 @@ class Calibration:
 class IonQBackend(Backend):
     """IonQ Backend base class."""
 
-    _client = None
+    _client: ionq_client.IonQClient | None = None
 
     def __init__(self, *args, **kwargs) -> None:
         # Add IonQ equivalences
