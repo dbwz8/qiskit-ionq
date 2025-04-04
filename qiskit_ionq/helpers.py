@@ -299,7 +299,7 @@ def qiskit_circ_to_ionq_circ(
     input_circuit: QuantumCircuit,
     gateset: Literal["qis", "native"] = "qis",
     ionq_compiler_synthesis: bool = False,
-    qubits: list[Qubit] = None,
+    qubits: list[Qubit]|None = None,
 ):
     """Build a circuit in IonQ's instruction format from qiskit instructions.
 
@@ -337,7 +337,7 @@ def qiskit_circ_to_ionq_circ(
         nonlocal output_circuit
         converted = {"gate": gate, "target": tgt}
         if conds is not None:
-            converted["conds"] = conds
+            converted["conditions"] = conds
         output_circuit.append(converted)
 
     # Need to map qubits from outer block
