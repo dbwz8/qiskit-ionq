@@ -336,7 +336,7 @@ def qiskit_circ_to_ionq_circ(
     def emit(gate, tgt, conditions=None):
         nonlocal output_circuit
         converted = {"gate": gate, "target": tgt}
-        if conds is not None:
+        if conditions is not None:
             converted["conditions"] = conds
         output_circuit.append(converted)
 
