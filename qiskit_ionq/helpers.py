@@ -62,9 +62,6 @@ from importlib_metadata import version
 from qiskit_ionq.constants import ErrorMitigation
 from . import exceptions as ionq_exceptions
 
-# Needs to be global since we can be nested a couple levels deep when we need it
-for_loop_exit_target: int | None = None
-
 # the qiskit gates that the IonQ backend can serialize to our IR
 # not the actual hardware basis gates for the system — we do our own transpilation pass.
 # also not an exact/complete list of the gates IonQ's backend takes
@@ -302,6 +299,9 @@ def qiskit_circ_to_ionq_circ(
     gateset: Literal["qis", "native"] = "qis",
     ionq_compiler_synthesis: bool = False,
     qubits: list[Qubit]|None = None,
+    for_loop_exit_target: int | None = None,
+    meas_map:dict[int,int] = {}
+
 ):
     """Build a circuit in IonQ's instruction format from qiskit instructions.
 
@@ -316,6 +316,8 @@ def qiskit_circ_to_ionq_circ(
         ionq_compiler_synthesis (bool): Whether to opt-in to IonQ compiler's intelligent
           trotterization.
         qubits (list[Qubit]): Overide circuit qubits or measurement targets in sub-circuits
+        for_loop_exit_target (int): Provided when we're inside a for loop
+        meas_map (dict[int,int]): Provided when we nest measurements
 
     Raises:
         IonQGateError: If an unsupported instruction is supplied.
@@ -328,10 +330,8 @@ def qiskit_circ_to_ionq_circ(
         int: The number of measurements.
         dict: The measurement map from qubit number to classical bit number.
     """
-    global for_loop_exit_target
     output_circuit = []
     num_meas = 0
-    meas_map = {}
     prev_m_target = None
     last_target = 0
     qubits = input_circuit.qubits if qubits is None else qubits
@@ -356,7 +356,12 @@ def qiskit_circ_to_ionq_circ(
         nonlocal input_circuit, output_circuit, meas_map
         circ.cregs = input_circuit.cregs
         gates, _, _ = qiskit_circ_to_ionq_circ(
-            circ, gateset, ionq_compiler_synthesis, qubits=qubits
+            circ, 
+            gateset,
+            ionq_compiler_synthesis,
+            qubits=qubits,
+            for_loop_exit_target=for_loop_exit_target,
+            meas_map=meas_map
         )
         for gate in gates:
             if "targets" in gate:
