@@ -62,6 +62,9 @@ from importlib_metadata import version
 from qiskit_ionq.constants import ErrorMitigation
 from . import exceptions as ionq_exceptions
 
+# Needs to be global since we can be nested a couple levels deep when we need it
+for_loop_exit_target: int | None = None
+
 # the qiskit gates that the IonQ backend can serialize to our IR
 # not the actual hardware basis gates for the system — we do our own transpilation pass.
 # also not an exact/complete list of the gates IonQ's backend takes
@@ -294,7 +297,6 @@ class CondParser:
             cond_sense = condition[1]
             return self.parse_bits_sense(cond_bits, cond_sense)
 
-
 def qiskit_circ_to_ionq_circ(
     input_circuit: QuantumCircuit,
     gateset: Literal["qis", "native"] = "qis",
@@ -326,6 +328,7 @@ def qiskit_circ_to_ionq_circ(
         int: The number of measurements.
         dict: The measurement map from qubit number to classical bit number.
     """
+    global for_loop_exit_target
     output_circuit = []
     num_meas = 0
     meas_map = {}
@@ -337,7 +340,15 @@ def qiskit_circ_to_ionq_circ(
         nonlocal output_circuit
         converted = {"gate": gate, "target": tgt}
         if conditions is not None:
-            converted["conditions"] = conds
+            converted["conditions"] = conditions
+        output_circuit.append(converted)
+
+    def emit_for(gate, c_reg, value=None):
+        """ set and dec gates """
+        nonlocal output_circuit
+        converted = {"gate": gate, "c_reg": c_reg}
+        if value is not None:
+            converted["value"] = value
         output_circuit.append(converted)
 
     # Need to map qubits from outer block
@@ -386,8 +397,17 @@ def qiskit_circ_to_ionq_circ(
         if instruction_name == "if_else":
             then_circ = instruction.params[0]
             else_circ = instruction.params[1]
+            
             parser = CondParser(input_circuit.cregs)
             conds = parser.parse(instruction.condition)
+            
+            # If we're in a for_loop, the only if allowed is for a break_loop
+            if for_loop_exit_target is not None:
+                if then_circ.data[0].name != "break_loop":
+                    raise Exception("IF inside a FOR loop can only to a BREAK")
+                emit("go",for_loop_exit_target,conds)
+                continue
+
             last_target += 1
             target1 = last_target
             last_target += 1
@@ -435,6 +455,40 @@ def qiskit_circ_to_ionq_circ(
             remap_body(while_circ)
             emit("go", target1, conds)
             continue
+
+        # Handle classical for loop
+        if instruction_name == "for_loop":
+            r = instruction.params[0]
+            if r.start != 0 or r.step != 1:
+                raise Exception("for_loop range must start at 0 and increment by 1")
+            loop_counter = r.stop
+            for_circ = instruction.params[2]
+            last_target += 1
+            top_target = last_target
+            last_target += 1
+            for_loop_exit_target = last_target
+
+            loop_reg = instruction.num_clbits
+            cond_false = f"F{loop_reg}"
+            cond_true = f"T{loop_reg}"
+
+            # Put out the code block
+            emit_for("set",loop_reg,loop_counter)
+            emit("tgt", top_target)
+            emit("go", for_loop_exit_target, cond_false)
+            remap_body(for_circ)
+            emit_for("dec",loop_reg)
+            emit("go", top_target, cond_true)
+            emit("tgt",for_loop_exit_target)
+            for_loop_exit_target = None
+            continue
+           
+        # Handle break out of loop
+        if instruction_name == "break_loop":
+            if for_loop_exit_target is None:
+                raise Exception("Can only BREAK inside of a FOR loop")
+            emit("go", for_loop_exit_target)
+            continue 
 
         # Handle mid-circuit measurements
         if instruction_name == "measure":
