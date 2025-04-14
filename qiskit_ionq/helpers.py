@@ -409,7 +409,7 @@ def qiskit_circ_to_ionq_circ(
             # If we're in a for_loop, the only if allowed is for a break_loop
             if for_loop_exit_target is not None:
                 if then_circ.data[0].name != "break_loop":
-                    raise Exception("IF inside a FOR loop can only to a BREAK")
+                    raise Exception("IF inside a FOR loop can only be used for a BREAK")
                 emit("go",for_loop_exit_target,conds)
                 continue
 
