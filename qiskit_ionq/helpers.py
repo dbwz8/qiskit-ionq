@@ -475,7 +475,6 @@ def qiskit_circ_to_ionq_circ(
 
             loop_reg = instruction.num_clbits
             cond_false = f"F{loop_reg}"
-            cond_true = f"T{loop_reg}"
 
             # Put out the code block
             emit_for("set",loop_reg,loop_counter)
@@ -483,7 +482,7 @@ def qiskit_circ_to_ionq_circ(
             emit("go", for_loop_exit_target, cond_false)
             remap_body(for_circ)
             emit_for("dec",loop_reg)
-            emit("go", top_target, cond_true)
+            emit("go", top_target)
             emit("tgt",for_loop_exit_target)
             for_loop_exit_target = None
             continue
